@@ -76,8 +76,25 @@ class SelectorBIC(ModelSelector):
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        best_model = self.base_model(self.min_n_components)
+        best_score = float("inf")
+
+        for n_component in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                model = self.base_model(n_component)
+                logL = model.score(self.X, self.lengths)
+                p = n_component**2 + 2 * self.X.shape[1] * n_component - 1
+                logN = np.log(len(self.X))
+                BIC = -2 * logL + p * logN
+
+                if BIC < best_score:
+                    best_score = BIC
+                    best_model = model
+
+            except:
+                continue
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -92,8 +109,36 @@ class SelectorDIC(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        best_model = self.base_model(self.n_constant)
+        best_score = float("inf")
+
+        m = len((self.words).keys())
+
+        for n_component in range(self.min_n_components, self.max_n_components + 1):
+            antiLogL = 0.0
+            try:
+                model = self.base_model(n_component)
+                logL = model.score(self.X, self.lengths)
+                means = np.mean([model.score(*self.hwords[word]) for word in self.words if word != self.this_word])
+                for a_word in self.hwords:
+                    if a_word == self.this_word:
+                        continue
+                    X_word, a_word_lengths = self.hwords[a_word]
+                    antiLogL += model.score(X_word, a_word_lengths)
+
+                antiLogL = np.mean(antiLogL)
+
+                # DIC = log(P(X(i)) - 1/(M-1)SUM(log(P(X(all but i))
+                DIC = logL - (1 / m - 1) * antiLogL
+
+                if DIC < best_score:
+                    best_score = DIC
+                    best_model = model
+
+            except:
+                continue
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -104,5 +149,33 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        best_score = float("-inf")
+        best_model = self.base_model(self.n_constant)
+        n_splits = 3
+        split_method = KFold(random_state=self.random_state, n_splits=n_splits)
+
+        for n_component in range(self.min_n_components, self.max_n_components + 1):
+            scores = []
+            model = None
+
+            if len(self.sequences) < n_splits:
+                break
+
+            for cv_train, cv_test in split_method.split(self.sequences):
+                X_train, lengths_train = combine_sequences(cv_train, self.sequences)
+                X_test, lengths_test = combine_sequences(cv_test, self.sequences)
+                try:
+                    # model = self.base_model(n_component)
+                    model = GaussianHMM(n_components=n_component, covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, verbose=False).fit(X_train, lengths_train)
+                    scores.append(model.score(X_test, lengths_test))
+                except:
+                    continue
+
+            avg = np.average(scores) if len(scores) > 0 else float("-inf")
+
+            if avg > best_score:
+                best_score = avg
+                best_model = model
+
+        return best_model
